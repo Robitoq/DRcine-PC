@@ -1,0 +1,63 @@
+name: Gerar DRcine para Windows
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+
+      - name: Gerar versão portátil
+        run: gradle :desktop:createDistributable --no-daemon
+
+      - name: Compactar versão portátil
+        shell: pwsh
+        run: Compress-Archive -Path desktop/build/compose/binaries/main/app/DRcine -DestinationPath DRcine-PC-portatil.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DRcine-PC-portatil
+          path: DRcine-PC-portatil.zip
+
+      - name: Gerar instaladores
+        continue-on-error: true
+        run: gradle :desktop:packageMsi :desktop:packageExe --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DRcine-PC-instaladores
+          path: |
+            desktop/build/compose/binaries/main/msi/*.msi
+            desktop/build/compose/binaries/main/exe/*.exe
+          if-no-files-found: warn
+
+      - name: Publicar na aba Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: pc-v${{ github.run_number }}
+          name: DRcine PC 1.${{ github.run_number }}
+          body: |
+            DRcine para Windows.
+            Precisa do VLC (64 bits) instalado: https://www.videolan.org/vlc/
+            - DRcine-PC-portatil.zip: descompacte e abra DRcine.exe (não precisa instalar).
+            - Arquivos .msi/.exe: instaladores (quando disponíveis).
+          files: |
+            DRcine-PC-portatil.zip
+            desktop/build/compose/binaries/main/msi/*.msi
+            desktop/build/compose/binaries/main/exe/*.exe
