@@ -11,6 +11,7 @@ dependencies {
     implementation(project(":shared"))
     implementation(compose.desktop.currentOs)
     implementation(compose.material3)
+    implementation(compose.animation)
     implementation("uk.co.caprica:vlcj:4.8.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.8.1")
 }
