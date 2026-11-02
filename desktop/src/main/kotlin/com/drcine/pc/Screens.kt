@@ -1,6 +1,7 @@
 package com.drcine.pc
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,6 +14,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
@@ -21,6 +24,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -42,6 +46,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.drcine.app.Api
@@ -224,6 +229,21 @@ fun AddonsScreen() {
 //  Detalhes (filme ou série)
 // ------------------------------------------------------------------------------------------------
 @Composable
+private fun CastCard(c: CastMember) {
+    Column(Modifier.width(96.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            Modifier.size(84.dp).clip(CircleShape).background(Color(0xFF1B2335)).border(1.dp, Line, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (c.photo.isNotBlank()) RemoteImage(c.photo, Modifier.fillMaxSize())
+            else Text(c.name.take(1), fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Muted)
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(c.name, fontSize = 12.sp, maxLines = 2, textAlign = TextAlign.Center)
+    }
+}
+
+@Composable
 fun DetailsScreen(item: Item, onBack: () -> Unit, onPlay: (Item, String?, String?) -> Unit) {
     var meta by remember(item.id) { mutableStateOf<JSONObject?>(null) }
     var cast by remember(item.id) { mutableStateOf<List<CastMember>>(emptyList()) }
@@ -247,57 +267,82 @@ fun DetailsScreen(item: Item, onBack: () -> Unit, onPlay: (Item, String?, String
     val bg = m?.s("background") ?: item.backdrop ?: item.poster
     val eps = remember(m) { if (item.type == "series") Api.eps(m, item.id) else emptyList() }
 
+    // O player usa esta lista para o "próximo episódio".
+    LaunchedEffect(eps) { if (eps.isNotEmpty()) EpCache.m[item.id] = eps }
+
+    val posterShape = RoundedCornerShape(14.dp)
+    val btnShape = RoundedCornerShape(12.dp)
+
     Box(Modifier.fillMaxSize()) {
-        RemoteImage(bg, Modifier.fillMaxWidth().height(420.dp), ContentScale.Crop)
+        RemoteImage(bg, Modifier.fillMaxWidth().height(520.dp), ContentScale.Crop)
         Box(
-            Modifier.fillMaxWidth().height(420.dp)
-                .background(Brush.verticalGradient(listOf(Color(0x80000000), MaterialTheme.colorScheme.background)))
+            Modifier.fillMaxWidth().height(520.dp)
+                .background(Brush.verticalGradient(listOf(Color(0x990A0F1C), MaterialTheme.colorScheme.background)))
         )
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 32.dp, vertical = 16.dp)) {
-            TextButton(onClick = onBack) { Text("← Voltar") }
-            Spacer(Modifier.height(50.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
-                RemoteImage(item.poster, Modifier.width(220.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(12.dp)))
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 40.dp, vertical = 20.dp)) {
+            Box(
+                Modifier.size(40.dp).clip(CircleShape).background(Color(0x66000000)).border(1.dp, Line, CircleShape)
+                    .clickable(onClick = onBack),
+                contentAlignment = Alignment.Center,
+            ) { Text("‹", fontSize = 24.sp) }
+            Spacer(Modifier.height(36.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(32.dp)) {
+                RemoteImage(
+                    item.poster,
+                    Modifier.width(230.dp).aspectRatio(2f / 3f).clip(posterShape).border(1.dp, Line, posterShape),
+                )
                 Column(Modifier.weight(1f)) {
-                    Text(title, fontSize = 34.sp, fontWeight = FontWeight.Black)
-                    val line = listOf(year, runtime, if (rating.isNotBlank()) "IMDb $rating" else "")
-                        .filter { it.isNotBlank() }.joinToString("   •   ")
-                    if (line.isNotEmpty()) Text(line, color = Muted, modifier = Modifier.padding(top = 6.dp))
-                    if (genres.isNotEmpty()) Text(genres.joinToString(", "), color = Accent, modifier = Modifier.padding(top = 4.dp))
+                    Chip(if (item.type == "series") "SÉRIE" else "FILME", highlight = true)
+                    Spacer(Modifier.height(10.dp))
+                    Text(title.uppercase(), fontSize = 40.sp, lineHeight = 44.sp, fontWeight = FontWeight.Black)
+                    Spacer(Modifier.height(12.dp))
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (year.isNotBlank()) Chip(year)
+                        if (runtime.isNotBlank()) Chip(runtime)
+                        if (rating.isNotBlank()) Chip("IMDb $rating")
+                        genres.forEachIndexed { i, g -> Chip(g, highlight = i == 0) }
+                    }
                     Spacer(Modifier.height(14.dp))
-                    if (desc.isNotBlank()) Text(desc, lineHeight = 22.sp)
+                    if (desc.isNotBlank()) Text(desc, lineHeight = 22.sp, color = Color(0xFFD5D9E2), modifier = Modifier.widthIn(max = 760.dp))
                     else if (!loaded) Text("Carregando informações…", color = Muted)
-                    Spacer(Modifier.height(18.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Spacer(Modifier.height(22.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        val padding = PaddingValues(horizontal = 28.dp, vertical = 14.dp)
                         if (item.type == "series") {
                             val last = Store.lastEp(item.id)
                             val target = eps.firstOrNull { it.id == last } ?: eps.firstOrNull()
                             if (target != null) {
                                 val txt = "T${target.season}:E${target.number}"
-                                Button(onClick = { onPlay(item, target.id, txt) }) {
-                                    Text(if (last != null && target.id == last) "Continuar $txt" else "Assistir $txt")
+                                Button(onClick = { onPlay(item, target.id, txt) }, shape = btnShape, contentPadding = padding) {
+                                    Text(if (last != null && target.id == last) "▶  Continuar $txt" else "▶  Assistir $txt", fontWeight = FontWeight.Bold)
                                 }
                             }
                         } else {
-                            Button(onClick = { onPlay(item, null, null) }) { Text("Assistir") }
+                            Button(onClick = { onPlay(item, null, null) }, shape = btnShape, contentPadding = padding) {
+                                Text("▶  Assistir", fontWeight = FontWeight.Bold)
+                            }
                         }
-                        OutlinedButton(onClick = { inList = MyList.toggle(item) }) {
-                            Text(if (inList) "Remover da minha lista" else "Minha lista")
+                        OutlinedButton(onClick = { inList = MyList.toggle(item) }, shape = btnShape, contentPadding = padding) {
+                            Text(if (inList) "✓  Na minha lista" else "+  Minha lista")
                         }
-                    }
-                    if (cast.isNotEmpty()) {
-                        Spacer(Modifier.height(18.dp))
-                        Text("Elenco", fontWeight = FontWeight.Bold)
-                        Text(cast.joinToString(", ") { it.name }, color = Muted, modifier = Modifier.padding(top = 2.dp))
                     }
                 }
             }
 
+            if (cast.isNotEmpty()) {
+                Spacer(Modifier.height(36.dp))
+                SectionTitle("Elenco")
+                Spacer(Modifier.height(14.dp))
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    cast.take(16).forEach { CastCard(it) }
+                }
+            }
+
             if (eps.isNotEmpty()) {
-                Spacer(Modifier.height(30.dp))
-                Text("Episódios", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(10.dp))
-                val seasons = remember(eps) { eps.map { it.season }.distinct() }
+                Spacer(Modifier.height(36.dp))
+                SectionTitle("Episódios")
+                Spacer(Modifier.height(14.dp))
+                val seasons = remember(eps) { eps.map { it.season }.distinct().sortedBy { if (it == 0) Int.MAX_VALUE else it } }
                 var season by remember(eps) {
                     mutableStateOf(
                         Store.lastEp(item.id)?.let { id -> eps.firstOrNull { it.id == id }?.season } ?: seasons.first()
@@ -305,26 +350,24 @@ fun DetailsScreen(item: Item, onBack: () -> Unit, onPlay: (Item, String?, String
                 }
                 val seen = remember(item.id) { Store.seenEps(item.id) }
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    seasons.forEach { s ->
-                        val label = if (s == 0) "Extras" else "Temporada $s"
-                        if (s == season) Button(onClick = { season = s }) { Text(label) }
-                        else OutlinedButton(onClick = { season = s }) { Text(label) }
-                    }
+                    seasons.forEach { s -> SeasonPill(if (s == 0) "Extras" else "T$s", s == season) { season = s } }
                 }
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(10.dp))
+                val rowShape = RoundedCornerShape(12.dp)
                 eps.filter { it.season == season }.forEach { e ->
                     Row(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
+                        Modifier.fillMaxWidth().padding(vertical = 4.dp).clip(rowShape).background(CardBg)
+                            .border(1.dp, Line, rowShape)
                             .clickable { onPlay(item, e.id, "T${e.season}:E${e.number}") }
-                            .padding(horizontal = 12.dp, vertical = 12.dp),
+                            .padding(horizontal = 18.dp, vertical = 14.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("${e.number}", Modifier.width(44.dp), color = Accent, fontWeight = FontWeight.Bold)
+                        Text("E%02d".format(e.number), Modifier.width(60.dp), color = Accent, fontWeight = FontWeight.Bold)
                         Text(e.title, Modifier.weight(1f))
                         val pr = Store.progressOf(e.id)
                         when {
-                            e.id in seen -> Text("visto", color = Muted)
-                            pr != null -> Text("$pr%", color = Muted)
+                            e.id in seen -> Text("visto", color = Muted, fontSize = 13.sp)
+                            pr != null -> Text("$pr%", color = Muted, fontSize = 13.sp)
                         }
                     }
                 }

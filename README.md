@@ -9,8 +9,11 @@ Feito com Kotlin + Compose Desktop. A pasta `shared/` é a mesma lógica do app 
 ## O que já tem (versão 1)
 - Início, Filmes e Séries com prateleiras de catálogo
 - Busca
-- Detalhes, elenco e episódios por temporada
-- Player (VLC): pausar, ±10 s, barra de tempo, volume, tela cheia, troca de servidor
+- Detalhes no estilo streaming: fundo grande, selos, pílulas de ano/gênero, elenco com fotos e episódios por temporada
+- Abre o filme em tela cheia; botão "Tela" (tecla A) troca a proporção: Original, Preencher, Esticar, 16:9, 4:3, 21:9
+- Player (VLC) com controles por cima do filme (somem sozinhos): pausar, ±10 s, barra de tempo, volume, tela cheia, troca de servidor
+- Atalhos: Espaço pausa, ← → pulam 10 s, ↑ ↓ volume, F tela cheia, Esc sai
+- Séries: o próximo episódio abre sozinho no fim (cartão "A seguir" nos últimos 20 s), botão "Próximo ep." (tecla N) e lista de episódios ao lado dos servidores
 - Continuar de onde parou, histórico e "Minha lista"
 - Instalar e remover addons colando o link do manifest
 
@@ -19,9 +22,11 @@ Login/conta, amigos, chat, "Assistir juntos", legendas e notificações.
 Dependem de partes que só existem no Android e entram numa próxima etapa.
 
 ## Como usar
-1. Instale o **VLC de 64 bits**: https://www.videolan.org/vlc/
-2. Pegue o DRcine na aba **Releases** deste repositório (`DRcine-PC-portatil.zip`, ou o instalador `.msi`/`.exe`).
-3. Descompacte e abra `DRcine.exe`.
+1. Pegue o DRcine na aba **Releases** deste repositório.
+2. Baixe `DRcine-Setup.exe`, dê dois cliques e pronto. Para desinstalar: Menu Iniciar > Desinstalar DRcine
+   (ou Configurações > Aplicativos). Se preferir sem instalar, use `DRcine-PC-portatil.zip` e abra `DRcine.exe`.
+
+O player de vídeo (VLC portátil) já vem dentro do programa: não precisa instalar o VLC.
 
 Os dados (addons, histórico, lista) ficam em `C:\Users\SEU_USUARIO\.drcine-pc\dados.json`.
 

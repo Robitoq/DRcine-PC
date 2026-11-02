@@ -8,7 +8,10 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +19,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -74,10 +78,16 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.drcine.app.Api
+import com.drcine.app.Ep
 import com.drcine.app.Item
 import com.drcine.app.Net
 import com.drcine.app.Store
+import com.sun.jna.Library
+import com.sun.jna.Native
+import com.sun.jna.NativeLibrary
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import org.jetbrains.skia.ColorAlphaType
 import org.jetbrains.skia.ColorType
 import org.jetbrains.skia.ImageInfo
@@ -91,9 +101,48 @@ import uk.co.caprica.vlcj.player.embedded.videosurface.VideoSurfaceAdapters
 import uk.co.caprica.vlcj.player.embedded.videosurface.callback.BufferFormatCallback
 import uk.co.caprica.vlcj.player.embedded.videosurface.callback.RenderCallback
 import uk.co.caprica.vlcj.player.embedded.videosurface.callback.format.RV32BufferFormat
+import java.io.File
 import java.lang.reflect.InvocationHandler
 import java.lang.reflect.Proxy
 import java.nio.ByteBuffer
+
+/** Interface mínima do Windows (msvcrt), só para definir uma variável de ambiente que o VLC lê. */
+interface Msvcrt : Library {
+    fun _putenv(s: String): Int
+}
+
+/**
+ * Acha o VLC. Primeiro usa o que vem DENTRO do programa (pasta "vlc" junto do DRcine.exe, com libvlc.dll,
+ * libvlccore.dll e plugins). Se não tiver, usa o VLC instalado no computador.
+ */
+object VlcLocator {
+    private var pluginDir: File? = null
+
+    val available: Boolean by lazy {
+        val res = System.getProperty("compose.application.resources.dir")
+        val dir = if (res != null) File(res, "vlc") else null
+        if (dir != null && File(dir, "libvlc.dll").exists() && File(dir, "libvlccore.dll").exists()) {
+            runCatching {
+                NativeLibrary.addSearchPath("libvlc", dir.absolutePath)
+                NativeLibrary.addSearchPath("libvlccore", dir.absolutePath)
+            }
+            pluginDir = File(dir, "plugins")
+            true
+        } else {
+            runCatching { NativeDiscovery().discover() }.getOrDefault(false)
+        }
+    }
+
+    fun createFactory(): MediaPlayerFactory? {
+        val pd = pluginDir
+        if (pd != null && pd.isDirectory) {
+            runCatching { Native.load("msvcrt", Msvcrt::class.java)._putenv("VLC_PLUGIN_PATH=${pd.absolutePath}") }
+            val f = runCatching { MediaPlayerFactory("--plugin-path=${pd.absolutePath}") }.getOrNull()
+            if (f != null) return f
+        }
+        return runCatching { MediaPlayerFactory() }.getOrNull()
+    }
+}
 
 /**
  * Envolve o VLC. O vídeo NÃO é mais desenhado numa janela do Windows por baixo do app (era isso que dava tela preta
@@ -104,8 +153,8 @@ import java.nio.ByteBuffer
  * que a tela lê a cada 0,25 s.
  */
 class VlcCtl {
-    val available: Boolean = runCatching { NativeDiscovery().discover() }.getOrDefault(false)
-    private val factory: MediaPlayerFactory? = if (available) runCatching { MediaPlayerFactory() }.getOrNull() else null
+    val available: Boolean = VlcLocator.available
+    private val factory: MediaPlayerFactory? = if (available) VlcLocator.createFactory() else null
     private val player: EmbeddedMediaPlayer? = runCatching { factory?.mediaPlayers()?.newEmbeddedMediaPlayer() }.getOrNull()
     val ok: Boolean get() = player != null
 
@@ -214,6 +263,8 @@ class VlcCtl {
     }
 }
 
+private fun epLabelOf(e: Ep) = "T${e.season}:E${e.number}"
+
 private fun fmt(ms: Long): String {
     val s = (ms / 1000).coerceAtLeast(0)
     val h = s / 3600
@@ -320,13 +371,25 @@ private fun PillButton(onClick: () -> Unit, content: @Composable RowScope.() -> 
     )
 }
 
+/** Formas de encaixar o filme na tela. */
+enum class AspectMode(val label: String) {
+    FIT("Original"), FILL("Preencher"), STRETCH("Esticar"), R169("16:9"), R43("4:3"), R219("21:9")
+}
+
 /** O quadro do vídeo. Só esta função é redesenhada a cada quadro (o resto da tela não). */
 @Composable
-private fun VideoFrame(ctl: VlcCtl, modifier: Modifier) {
+private fun VideoFrame(ctl: VlcCtl, mode: AspectMode, modifier: Modifier) {
     val f = ctl.frame.value
-    Box(modifier.background(Color.Black)) {
+    Box(modifier.background(Color.Black), contentAlignment = Alignment.Center) {
         if (f != null) {
-            Image(bitmap = f, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+            when (mode) {
+                AspectMode.FIT -> Image(bitmap = f, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                AspectMode.FILL -> Image(bitmap = f, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                AspectMode.STRETCH -> Image(bitmap = f, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
+                AspectMode.R169 -> Image(bitmap = f, contentDescription = null, modifier = Modifier.aspectRatio(16f / 9f), contentScale = ContentScale.FillBounds)
+                AspectMode.R43 -> Image(bitmap = f, contentDescription = null, modifier = Modifier.aspectRatio(4f / 3f), contentScale = ContentScale.FillBounds)
+                AspectMode.R219 -> Image(bitmap = f, contentDescription = null, modifier = Modifier.aspectRatio(21f / 9f), contentScale = ContentScale.FillBounds)
+            }
         }
     }
 }
@@ -342,6 +405,7 @@ fun PlayerScreen(
     fullscreen: Boolean,
     onFullscreen: (Boolean) -> Unit,
     onBack: () -> Unit,
+    onPlayEpisode: (String, String) -> Unit = { _, _ -> },
 ) {
     val ctl = remember { VlcCtl() }
     if (!ctl.ok) {
@@ -366,7 +430,11 @@ fun PlayerScreen(
     var drag by remember(sid) { mutableStateOf<Float?>(null) }
     var volume by remember { mutableStateOf(100f) }
     var lastVolume by remember { mutableStateOf(100f) }
-    var showServers by remember { mutableStateOf(false) }
+    var panel by remember { mutableStateOf(0) }   // 0 = nenhum, 1 = servidores, 2 = episódios
+    var panelSeason by remember(sid) { mutableStateOf<Int?>(null) }
+    var nextDismissed by remember(sid) { mutableStateOf(false) }
+    val autoDone = remember(sid) { booleanArrayOf(false) }
+    var aspect by remember { mutableStateOf(AspectMode.values().getOrElse(Store.num("aspect", 0L).toInt()) { AspectMode.FIT }) }
     var now by remember { mutableStateOf(System.currentTimeMillis()) }
     val act = remember { longArrayOf(System.currentTimeMillis()) }          // última vez que o mouse/teclado mexeu
     val track = remember(sid) { longArrayOf(0L, 0L) }                       // [posição, duração] para salvar ao sair
@@ -374,7 +442,25 @@ fun PlayerScreen(
     val focus = remember { FocusRequester() }
     val hasFrame by remember(ctl) { derivedStateOf { ctl.frame.value != null } }
 
+    // Episódios da série (a tela de detalhes já deixa a lista pronta; se não, busca aqui).
+    var eps by remember(item.id) { mutableStateOf(EpCache.m[item.id] ?: emptyList<Ep>()) }
+    LaunchedEffect(item.id) {
+        if (item.type == "series" && eps.isEmpty()) {
+            eps = withContext(Dispatchers.IO) {
+                runCatching { Api.eps(Api.meta(Store.addons(), item), item.id) }.getOrDefault(emptyList())
+            }
+            if (eps.isNotEmpty()) EpCache.m[item.id] = eps
+        }
+    }
+    val ordered = remember(eps) {
+        eps.sortedWith(compareBy<Ep>({ if (it.season == 0) Int.MAX_VALUE else it.season }, { it.number }))
+    }
+    val curIdx = ordered.indexOfFirst { it.id == epId }
+    val nextEp: Ep? = if (curIdx >= 0) ordered.getOrNull(curIdx + 1)?.takeIf { it.season != 0 } else null
+
     val fsNow by rememberUpdatedState(fullscreen)
+    val nextNow by rememberUpdatedState(nextEp)
+    val playEp by rememberUpdatedState(onPlayEpisode)
     val fsCb by rememberUpdatedState(onFullscreen)
     val backCb by rememberUpdatedState(onBack)
 
@@ -386,6 +472,9 @@ fun PlayerScreen(
     }
 
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+
+    // Ao abrir o filme, já entra em tela cheia (sem barra de título e sem a barra do Windows).
+    LaunchedEffect(Unit) { fsCb(true) }
 
     // Escolhe o servidor: o que a pessoa já usava; senão o primeiro que chegou (e não falhou).
     LaunchedEffect(playable.size, failed.size) {
@@ -434,12 +523,22 @@ fun PlayerScreen(
                 current = null
                 status = "Esse servidor falhou, tentando outro…"
             }
-            if (ctl.endedFlag) {
+            val ended = ctl.endedFlag
+            if (ended) {
                 ctl.endedFlag = false
                 Store.savePos(sid, track[1], track[1])   // terminou: apaga o ponto salvo
                 if (epId != null) Store.markSeen(item.id, epId)
                 track[0] = 0L
                 status = "Fim."
+            }
+            // Série: quando o episódio acaba (ou está nos últimos 1,5 s), abre o próximo sozinho.
+            val nx = nextNow
+            if (nx != null && !autoDone[0] && !nextDismissed &&
+                (ended || (dur > 60_000 && pos > 0 && dur - pos < 1_500))
+            ) {
+                autoDone[0] = true
+                if (epId != null) Store.markSeen(item.id, epId)
+                playEp(nx.id, epLabelOf(nx))
             }
             if (playing && now - lastSave > 5_000) {
                 Store.savePos(sid, pos, dur)
@@ -456,7 +555,12 @@ fun PlayerScreen(
 
     val noServer = !searching && playable.isEmpty()
     val allFailed = current == null && playable.isNotEmpty() && playable.all { it.second.url in failed } && !searching
-    val controlsVisible = !playing || showServers || drag != null || now - act[0] < 3_000
+    val controlsVisible = !playing || panel != 0 || drag != null || now - act[0] < 3_000
+
+    val cycleAspect: () -> Unit = {
+        aspect = AspectMode.values()[(aspect.ordinal + 1) % AspectMode.values().size]
+        Store.setNum("aspect", aspect.ordinal.toLong())
+    }
 
     val keys: (KeyEvent) -> Boolean = { e ->
         if (e.type != KeyEventType.KeyDown) {
@@ -470,6 +574,8 @@ fun PlayerScreen(
                 Key.DirectionUp -> { volume = (volume + 5f).coerceAtMost(120f); true }
                 Key.DirectionDown -> { volume = (volume - 5f).coerceAtLeast(0f); true }
                 Key.F -> { fsCb(!fsNow); true }
+                Key.A -> { cycleAspect(); true }
+                Key.N -> { nextNow?.let { playEp(it.id, epLabelOf(it)) }; true }
                 Key.Escape -> { if (fsNow) fsCb(false) else backCb(); true }
                 else -> false
             }
@@ -497,6 +603,7 @@ fun PlayerScreen(
         // O filme. Um toque pausa/continua, dois toques alternam a tela cheia.
         VideoFrame(
             ctl,
+            aspect,
             Modifier.fillMaxSize().pointerInput(Unit) {
                 detectTapGestures(
                     onDoubleTap = { fsCb(!fsNow) },
@@ -601,7 +708,17 @@ fun PlayerScreen(
                         modifier = Modifier.width(120.dp),
                     )
                     Spacer(Modifier.weight(1f))
-                    PillButton(onClick = { showServers = !showServers }) {
+                    if (nextEp != null) {
+                        PillButton(onClick = { playEp(nextEp.id, epLabelOf(nextEp)) }) { Text("Próximo ep.  »", fontSize = 14.sp) }
+                        Spacer(Modifier.width(10.dp))
+                    }
+                    PillButton(onClick = cycleAspect) { Text("Tela: ${aspect.label}", fontSize = 14.sp) }
+                    Spacer(Modifier.width(10.dp))
+                    if (eps.isNotEmpty()) {
+                        PillButton(onClick = { panel = if (panel == 2) 0 else 2 }) { Text("Episódios", fontSize = 14.sp) }
+                        Spacer(Modifier.width(10.dp))
+                    }
+                    PillButton(onClick = { panel = if (panel == 1) 0 else 1 }) {
                         Text("Servidores", fontSize = 14.sp)
                         if (playable.isNotEmpty()) Text("  ${playable.size}", color = Accent, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                     }
@@ -613,16 +730,17 @@ fun PlayerScreen(
 
         // Painel de servidores (por cima do filme, à direita)
         AnimatedVisibility(
-            visible = showServers, enter = fadeIn(), exit = fadeOut(),
+            visible = panel == 1, enter = fadeIn(), exit = fadeOut(),
             modifier = Modifier.align(Alignment.CenterEnd),
         ) {
             Column(
                 Modifier.padding(end = 20.dp).width(380.dp).heightIn(max = 520.dp)
-                    .clip(RoundedCornerShape(16.dp)).background(Color(0xEE121214)).padding(12.dp),
+                    .clip(RoundedCornerShape(16.dp)).background(Color(0xEE0B1020))
+                    .border(1.dp, Line, RoundedCornerShape(16.dp)).padding(12.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Servidores", fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.weight(1f).padding(8.dp))
-                    TextButton(onClick = { showServers = false }) { Text("Fechar") }
+                    TextButton(onClick = { panel = 0 }) { Text("Fechar") }
                 }
                 if (playable.isEmpty()) {
                     Text(if (searching) "Procurando…" else "Nenhum servidor.", color = Muted, modifier = Modifier.padding(8.dp))
@@ -647,6 +765,71 @@ fun PlayerScreen(
                 }
             }
         }
+
+        // Painel de episódios (série): temporadas em pílulas e a lista do lado dos servidores
+        AnimatedVisibility(
+            visible = panel == 2, enter = fadeIn(), exit = fadeOut(),
+            modifier = Modifier.align(Alignment.CenterEnd),
+        ) {
+            val seasons = eps.map { it.season }.distinct().sortedBy { if (it == 0) Int.MAX_VALUE else it }
+            val shown = panelSeason ?: eps.firstOrNull { it.id == epId }?.season ?: seasons.firstOrNull()
+            Column(
+                Modifier.padding(end = 20.dp).width(400.dp).heightIn(max = 560.dp)
+                    .clip(RoundedCornerShape(16.dp)).background(Color(0xEE0B1020))
+                    .border(1.dp, Line, RoundedCornerShape(16.dp)).padding(12.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Episódios", fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.weight(1f).padding(8.dp))
+                    TextButton(onClick = { panel = 0 }) { Text("Fechar") }
+                }
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    seasons.forEach { sn -> SeasonPill(if (sn == 0) "Extras" else "T$sn", sn == shown) { panelSeason = sn } }
+                }
+                LazyColumn {
+                    items(eps.filter { it.season == shown }) { e ->
+                        val cur = e.id == epId
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                                .background(if (cur) Color(0x33FFD60A) else Color.Transparent)
+                                .clickable { if (!cur) playEp(e.id, epLabelOf(e)) }
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("E%02d".format(e.number), Modifier.width(48.dp), color = Accent, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text(e.title, Modifier.weight(1f), fontSize = 14.sp, maxLines = 2)
+                            if (cur) Text("tocando", color = Accent, fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Cartão "A seguir" nos últimos 20 s do episódio
+        val remainingSec = ((dur - pos) / 1000).toInt()
+        val showNext = nextEp != null && !nextDismissed && dur > 60_000 && dur - pos in 1L..20_000L
+        AnimatedVisibility(
+            visible = showNext, enter = fadeIn(), exit = fadeOut(),
+            modifier = Modifier.align(Alignment.BottomEnd),
+        ) {
+            Column(
+                Modifier.padding(end = 28.dp, bottom = 170.dp).width(330.dp)
+                    .clip(RoundedCornerShape(16.dp)).background(Color(0xEE0B1020))
+                    .border(1.dp, Line, RoundedCornerShape(16.dp)).padding(16.dp),
+            ) {
+                Text("A SEGUIR", color = Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp)
+                if (nextEp != null) {
+                    Text("${epLabelOf(nextEp)}  ·  ${nextEp.title}", fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 2, modifier = Modifier.padding(top = 4.dp))
+                }
+                Text("Começa em ${remainingSec}s", color = Accent, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+                Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { nextEp?.let { playEp(it.id, epLabelOf(it)) } }) { Text("Assistir agora") }
+                    OutlinedButton(onClick = { nextDismissed = true }) { Text("Cancelar") }
+                }
+            }
+        }
     }
 }
 
@@ -656,7 +839,7 @@ private fun VlcMissing(onBack: () -> Unit) {
         Text("O DRcine usa o VLC para tocar os vídeos.", fontSize = 20.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(10.dp))
         Text(
-            "Não encontrei o VLC neste computador. Instale a versão de 64 bits (videolan.org) e abra o DRcine de novo.",
+            "Não consegui iniciar o player de vídeo. Instale o VLC de 64 bits (videolan.org) e abra o DRcine de novo.",
             color = Muted,
         )
         Spacer(Modifier.height(18.dp))

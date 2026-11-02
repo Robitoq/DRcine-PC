@@ -1,6 +1,7 @@
 package com.drcine.pc
 
 import com.drcine.app.AddonStreamCache
+import com.drcine.app.Ep
 import com.drcine.app.Item
 import com.drcine.app.Prefs
 import com.drcine.app.Store
@@ -62,6 +63,11 @@ class MemStreamCache : StreamCacheStore {
     }
     override fun deleteOlderThan(minTimestamp: Long) { m.entries.removeIf { it.value.timestamp < minTimestamp } }
     override fun clear() { m.clear() }
+}
+
+/** Episódios da série que está aberta (a tela de detalhes guarda aqui; o player usa para "próximo episódio"). */
+object EpCache {
+    val m = ConcurrentHashMap<String, List<Ep>>()
 }
 
 /** "Minha lista" (sem o limite de 20 itens do histórico). */
